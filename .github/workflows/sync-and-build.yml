@@ -1,0 +1,95 @@
+name: Auto Sync Upstream & Release P40
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天北京时间早上 8:00 自动运行
+  workflow_dispatch: # 保留手动触发按钮
+
+jobs:
+  # 任务 1：自动同步官方上游代码
+  sync-upstream:
+    runs-on: ubuntu-latest
+    outputs:
+      has_new_commits: ${{ steps.sync.outputs.has_new_commits }}
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Sync Upstream
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
+        with:
+          target_sync_branch: master
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+          upstream_repo_owner: ggerganov
+          upstream_repo_branch: master
+          upstream_pull_args: '--rebase-merges'
+
+  # 任务 2：自动编译并发布到 Release
+  build-and-release:
+    needs: sync-upstream
+    if: ${{ needs.sync-upstream.outputs.has_new_commits == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: windows-2022
+
+    steps:
+      - name: Clone Updated Code
+        uses: actions/checkout@v6
+        with:
+          ref: master
+
+      - name: Get Short SHA & Date
+        id: vars
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+      - name: Install ccache
+        uses: ggml-org/ccache-action@v1.2.16
+        with:
+          key: windows-cuda-12.4
+          variant: ccache
+          evict-old-files: 1d
+
+      - name: Install Cuda Toolkit
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '12.4'
+
+      - name: Install Ninja
+        run: choco install ninja
+
+      - name: Build (P40 Exclusive Edition)
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G "Ninja Multi-Config" ^
+            -DGGML_BACKEND_DL=ON ^
+            -DGGML_NATIVE=OFF ^
+            -DGGML_CPU=OFF ^
+            -DGGML_CUDA=ON ^
+            -DLLAMA_BUILD_BORINGSSL=ON ^
+            -DGGML_CUDA_CUB_3DOT2=ON ^
+            -DCMAKE_CUDA_ARCHITECTURES=61
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          cmake --build build --config Release -j %NINJA_JOBS%
+
+      - name: Pack P40 Artifacts
+        run: |
+          7z a -snl llama-P40-Latest-Win64.zip .\build\bin\Release\ggml-cuda.dll .\build\bin\Release\llama-server.exe
+
+      - name: Create and Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: p40-b${{ steps.vars.outputs.date }}-${{ steps.vars.outputs.sha }}
+          name: Tesla P40 Exclusive Build (b${{ steps.vars.outputs.date }})
+          body: |
+            Automatically synchronized and compiled from upstream.
+            - Base Commit: ${{ steps.vars.outputs.sha }}
+            - CUDA Toolkit: 12.4
+            - Architecture: sm_61 (Tesla P40 / Pascal)
+          files: llama-P40-Latest-Win64.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
