@@ -7,7 +7,7 @@ on:
 
 jobs:
   # 任务 1：自动同步官方上游代码
-  sync-upstream:
+  sync-upstream:build-and-release:
     runs-on: ubuntu-latest
     outputs:
       has_new_commits: ${{ steps.sync.outputs.has_new_commits }}
@@ -31,9 +31,9 @@ jobs:
   # 任务 2：自动编译并发布到 Release
   build-and-release:
     needs: sync-upstream
-    if: ${{ needs.sync-upstream.outputs.has_new_commits == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: always() # 强制无论是否有新代码，只要同步完成就直接开始编译
     runs-on: windows-2022
-
+    
     steps:
       - name: Clone Updated Code
         uses: actions/checkout@v6
