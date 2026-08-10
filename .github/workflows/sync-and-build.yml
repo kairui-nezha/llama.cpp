@@ -3,11 +3,11 @@ name: Auto Sync Upstream & Release P40
 on:
   schedule:
     - cron: '0 0 * * *' # 每天北京时间早上 8:00 自动运行
-  workflow_dispatch: # 保留手动触发按钮
+  workflow_dispatch: # 支持手动点击运行
 
 jobs:
   # 任务 1：自动同步官方上游代码
-  sync-upstream:build-and-release:
+  sync-upstream:
     runs-on: ubuntu-latest
     outputs:
       has_new_commits: ${{ steps.sync.outputs.has_new_commits }}
@@ -28,12 +28,12 @@ jobs:
           upstream_repo_branch: master
           upstream_pull_args: '--rebase-merges'
 
-  # 任务 2：自动编译并发布到 Release
+  # 任务 2：编译并发布到 Release
   build-and-release:
     needs: sync-upstream
-    if: always() # 强制无论是否有新代码，只要同步完成就直接开始编译
+    if: always() # 无论是否有代码更新均强制执行编译与发布
     runs-on: windows-2022
-    
+
     steps:
       - name: Clone Updated Code
         uses: actions/checkout@v6
